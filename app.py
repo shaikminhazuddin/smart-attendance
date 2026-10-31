@@ -77,12 +77,31 @@ class FaceEngine:
     def __init__(self):
         if not hasattr(cv2, "face"):
             raise RuntimeError("cv2.face missing. Run: pip uninstall opencv-python -y && pip install opencv-contrib-python")
-        self.detector = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        
+        xml_name = "haarcascade_frontalface_default.xml"
+        local_xml = os.path.join(BASE, xml_name)
+        if os.path.isfile(local_xml):
+            self.detector = cv2.CascadeClassifier(local_xml)
+        else:
+            self.detector = cv2.CascadeClassifier(cv2.data.haarcascades + xml_name)
+            
+        if self.detector.empty():
+            # Try alternate path
+            alt = os.path.join(getattr(cv2.data, "haarcascades", ""), xml_name)
+            self.detector = cv2.CascadeClassifier(alt)
+            
+        if self.detector.empty():
+            print("[AI ERROR] Could not load face detector cascade XML!")
+        else:
+            print("[AI] Face detector loaded successfully.")
+            
         self.model = None
         self.labels = {}
         self.lock = threading.Lock()
 
     def detect(self, gray):
+        if self.detector.empty():
+            return ()
         return self.detector.detectMultiScale(gray, 1.2, 5, minSize=(70, 70))
 
     @staticmethod
@@ -314,6 +333,17 @@ cam.start()
 
 
 # ------------------------------------------------------------------- routes
+@app.errorhandler(500)
+def handle_500_error(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify(ok=False, error=f"Internal Server Error: {str(e)}"), 500
+
+@app.errorhandler(Exception)
+def handle_all_exceptions(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify(ok=False, error=str(e)), 500
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":

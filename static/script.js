@@ -487,22 +487,30 @@ $("regBtn").addEventListener("click", async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ student_id: sid, index: sampleCount + 1, image: dataUrl })
       });
-      const sData = await sRes.json();
 
-      if (sRes.ok && sData.ok) {
+      let sData = null;
+      try {
+        sData = await sRes.json();
+      } catch (parseErr) {
+        // Fallback if not valid JSON
+      }
+
+      if (sRes.ok && sData && sData.ok) {
         sampleCount++;
         const pct = Math.round((sampleCount / total) * 100);
         $("capBar").style.width = pct + "%";
         $("capText").textContent = `Captured ${sampleCount}/${total} samples — slowly tilt or turn head slightly...`;
         $("regErr").textContent = "";
-        await new Promise(r => setTimeout(r, 160));
+        await new Promise(r => setTimeout(r, 180));
       } else {
-        $("regErr").textContent = sData.error || "Position face clearly inside the oval guide.";
-        await new Promise(r => setTimeout(r, 250));
+        const errorMsg = (sData && sData.error) ? sData.error : "Position your face clearly inside the oval guide.";
+        $("regErr").textContent = errorMsg;
+        await new Promise(r => setTimeout(r, 300));
       }
     } catch (err) {
-      $("regErr").textContent = "Network error while saving sample. Retrying...";
-      await new Promise(r => setTimeout(r, 400));
+      console.warn("Sample capture error:", err);
+      $("regErr").textContent = "Connecting to server... Keep face centered in frame.";
+      await new Promise(r => setTimeout(r, 450));
     }
   }
 
