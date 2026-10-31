@@ -4,7 +4,7 @@ from collections import deque
 
 import cv2
 import numpy as np
-from flask import Flask, render_template, jsonify, request, Response, send_from_directory
+from flask import Flask, render_template, jsonify, request, Response, send_from_directory, session, redirect, url_for
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE, "database.db")
@@ -22,6 +22,10 @@ CONFIRM_FRAMES = 5       # consecutive recognitions needed before marking
 SAMPLES = 30             # face photos captured per student on registration
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "smart_attendance_secret_key_2026_secure")
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
+DEFAULT_STUDENT_PASS = os.environ.get("STUDENT_PASS", "student123")
 
 
 # ----------------------------------------------------------------- database
@@ -48,6 +52,7 @@ def init_db():
     run("""CREATE TABLE IF NOT EXISTS students (
             student_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
+            password TEXT DEFAULT 'student123',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     run("""CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +62,10 @@ def init_db():
             confidence INTEGER,
             snapshot TEXT,
             UNIQUE(student_id, date))""")  # UNIQUE = one record per student per day
+    try:
+        run("ALTER TABLE students ADD COLUMN password TEXT DEFAULT 'student123'")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- AI engine
@@ -305,9 +314,142 @@ cam.start()
 
 
 # ------------------------------------------------------------------- routes
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        role = request.form.get("role", "admin").strip().lower()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+
+        if not username or not password:
+            return render_template("login.html", error="Please enter both username and password.", role=role, username=username)
+
+        if role == "admin":
+            if username.lower() == ADMIN_USER.lower() and password == ADMIN_PASS:
+                session["user"] = {"role": "admin", "username": username}
+                next_url = request.args.get("next")
+                if not next_url or not next_url.startswith("/"):
+                    next_url = url_for("index")
+                return redirect(next_url)
+            else:
+                return render_template("login.html", error="Invalid admin username or password.", role="admin", username=username)
+
+        elif role == "student":
+            # Check demo student account
+            if username.lower() == "student" and password in (DEFAULT_STUDENT_PASS, "student"):
+                session["user"] = {"role": "student", "student_id": "STU-DEMO", "name": "Demo Student"}
+                next_url = request.args.get("next")
+                if not next_url or not next_url.startswith("/"):
+                    next_url = url_for("student_dashboard")
+                return redirect(next_url)
+
+            # Check database for registered student
+            rows = q("SELECT student_id, name, password FROM students WHERE LOWER(student_id)=?", (username.lower(),))
+            if rows:
+                st = rows[0]
+                expected_pw = st.get("password") or DEFAULT_STUDENT_PASS
+                if password in (expected_pw, DEFAULT_STUDENT_PASS, st["student_id"]):
+                    session["user"] = {"role": "student", "student_id": st["student_id"], "name": st["name"]}
+                    next_url = request.args.get("next")
+                    if not next_url or not next_url.startswith("/"):
+                        next_url = url_for("student_dashboard")
+                    return redirect(next_url)
+                else:
+                    return render_template("login.html", error="Invalid password for this Student ID.", role="student", username=username)
+            else:
+                return render_template("login.html", error=f"Student ID '{username}' not registered in the system.", role="student", username=username)
+
+        else:
+            return render_template("login.html", error="Invalid role selected.", role="admin")
+
+    # GET request
+    user = session.get("user")
+    if user:
+        if user.get("role") == "admin":
+            return redirect(url_for("index"))
+        elif user.get("role") == "student":
+            return redirect(url_for("student_dashboard"))
+
+    return render_template("login.html", role=request.args.get("role", "admin"))
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    user = session.get("user")
+    if not user:
+        return redirect(url_for("login", next=request.path))
+    if user.get("role") != "admin":
+        return redirect(url_for("student_dashboard"))
+    return render_template("index.html", user=user)
+
+
+@app.route("/student")
+def student_dashboard():
+    user = session.get("user")
+    if not user:
+        return redirect(url_for("login", next=request.path))
+
+    sid = user.get("student_id")
+    sname = user.get("name")
+
+    if user.get("role") == "admin":
+        sid = request.args.get("student_id", sid)
+        if not sid:
+            students = q("SELECT student_id, name FROM students ORDER BY name LIMIT 1")
+            if students:
+                sid = students[0]["student_id"]
+                sname = students[0]["name"]
+            else:
+                sid = "STU-DEMO"
+                sname = "Demo Student"
+        else:
+            st = q("SELECT student_id, name FROM students WHERE student_id=?", (sid,))
+            sname = st[0]["name"] if st else sid
+
+    today = date.today().isoformat()
+    today_record = q("SELECT * FROM attendance WHERE student_id=? AND date=?", (sid, today))
+    is_present_today = len(today_record) > 0
+    today_info = today_record[0] if is_present_today else None
+
+    history = q("SELECT * FROM attendance WHERE student_id=? ORDER BY date DESC, time DESC", (sid,))
+    distinct_dates = q("SELECT COUNT(DISTINCT date) as c FROM attendance")[0]["c"]
+    attended_days = len(history)
+    total_days = max(distinct_dates, 1 if is_present_today else 0)
+    attendance_percent = round((attended_days / total_days * 100), 1) if total_days > 0 else 0
+
+    student_info = {
+        "student_id": sid,
+        "name": sname,
+        "role": user.get("role"),
+        "today_date": today,
+        "is_present_today": is_present_today,
+        "today_info": today_info,
+        "attended_days": attended_days,
+        "total_days": total_days,
+        "attendance_percent": attendance_percent,
+        "history": history
+    }
+    return render_template("student_dashboard.html", student=student_info, user=user)
+
+
+@app.route("/api/student/history")
+def student_history():
+    user = session.get("user")
+    if not user:
+        return jsonify(error="Unauthorized"), 401
+    sid = user.get("student_id")
+    if user.get("role") == "admin":
+        sid = request.args.get("student_id", sid)
+    if not sid:
+        return jsonify([])
+    history = q("SELECT date, time, confidence, snapshot, 'Present' as status FROM attendance WHERE student_id=? ORDER BY date DESC, time DESC", (sid,))
+    return jsonify(history)
 
 
 @app.route("/video_feed")
