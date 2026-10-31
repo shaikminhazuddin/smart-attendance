@@ -48,6 +48,7 @@
         linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
       background-size: 40px 40px;
       pointer-events: none;
+      -webkit-mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
       mask-image: radial-gradient(circle at center, black 40%, transparent 80%);
     }
 
@@ -107,6 +108,7 @@
       margin-bottom: 4px;
       background: linear-gradient(180deg, #ffffff, #cbd5e1);
       -webkit-background-clip: text;
+      background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
@@ -350,7 +352,7 @@
       {% endif %}
 
       <!-- Form -->
-      <form method="POST" action="/login{% if request.query_string %}?{{ request.query_string.decode('utf-8') }}{% endif %}" id="loginForm">
+      <form method="POST" id="loginForm">
         <input type="hidden" name="role" id="roleInput" value="{{ role or 'admin' }}">
 
         <div class="form-group">
