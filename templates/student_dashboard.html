@@ -376,7 +376,7 @@
                   <div class="d-flex align-items-center gap-2">
                     <span class="fw-semibold small">{{ rec.confidence or 0 }}%</span>
                     <div class="conf-bar">
-                      <div class="conf-bar-fill" style="width: {{ rec.confidence or 0 }}%;"></div>
+                      <div class="conf-bar-fill" data-confidence="{{ rec.confidence or 0 }}"></div>
                     </div>
                   </div>
                 </td>
@@ -455,6 +455,11 @@
       document.getElementById("modalSnapImg").src = src;
       imageModal.show();
     }
+
+    // Initialize confidence progress bars
+    document.querySelectorAll('.conf-bar-fill[data-confidence]').forEach(bar => {
+      bar.style.width = (bar.dataset.confidence || 0) + '%';
+    });
   </script>
 </body>
 </html>
